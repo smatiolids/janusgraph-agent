@@ -1,12 +1,13 @@
 import path from "node:path";
 import { appendFile, mkdir } from "node:fs/promises";
+import { resolveAppPath } from "@/lib/app-paths";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 type LogPayload = Record<string, unknown>;
 
 const levels: LogLevel[] = ["debug", "info", "warn", "error"];
-const logDir = path.join(process.cwd(), "log");
+const logDir = resolveAppPath("log");
 const logFile = path.join(logDir, "app.log");
 
 function getConfiguredLevel(): LogLevel {

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { appendFile, mkdir, readFile as readFileFromDisk, rm, writeFile as writeFileToDisk } from "node:fs/promises";
 import YAML from "yaml";
+import { resolveAppPath } from "@/lib/app-paths";
 import { exists } from "@/lib/fs-utils";
 import { runGremlinQuery } from "@/lib/gremlin/client";
 import { getSessionAgentContext, getSessionById, updateSessionAgentContext } from "@/lib/sessions/store";
@@ -23,10 +24,10 @@ const defaultDataModel = {
   edges: []
 };
 
-const promptLogDir = path.join(process.cwd(), "log");
+const promptLogDir = resolveAppPath("log");
 const promptLogFile = path.join(promptLogDir, "agent-prompts.log");
-const sessionContextRoot = path.join(process.cwd(), "server");
-const legacySessionContextRoot = path.join(process.cwd(), "server", "session-contexts");
+const sessionContextRoot = resolveAppPath("server");
+const legacySessionContextRoot = resolveAppPath("server", "session-contexts");
 
 const janusSchemaQuery = `mgmt = graph.openManagement(); try { [
   vertexLabels: mgmt.getVertexLabels().collect { it.name() }.sort(),
@@ -151,13 +152,13 @@ async function loadGraphDataModel(): Promise<unknown> {
     }
   }
 
-  const jsonPath = path.join(process.cwd(), "server", "datamodel.json");
+  const jsonPath = resolveAppPath("server", "datamodel.json");
   if (await exists(jsonPath)) {
     const raw = await readFileFromDisk(jsonPath, "utf8");
     return JSON.parse(raw);
   }
 
-  const yamlPath = path.join(process.cwd(), "server", "datamodel.yaml");
+  const yamlPath = resolveAppPath("server", "datamodel.yaml");
   if (await exists(yamlPath)) {
     const raw = await readFileFromDisk(yamlPath, "utf8");
     return YAML.parse(raw);

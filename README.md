@@ -30,11 +30,10 @@ Inspect and run queries
 ## Requirements
 
 - Node.js 20+
-- `pnpm`
 - Reachable JanusGraph Gremlin endpoint(s)
 - OpenAI API key
 
-## Quick Start
+## Quick Start (Local Repo)
 
 1. Install dependencies.
 ```bash
@@ -53,6 +52,21 @@ OPENAI_API_KEY=your_key_here
 pnpm dev
 ```
 5. Open `http://localhost:3000`.
+
+## Quick Start (NPX)
+
+1. Export your API key.
+```bash
+export OPENAI_API_KEY=your_key_here
+```
+2. Start GraphX.AI directly:
+```bash
+npx graphx-ai
+```
+3. Open `http://localhost:3000`.
+
+By default, runtime files are created in your current directory under `./server` and `./log`.
+Set `GRAPHX_AI_HOME` to store this data elsewhere.
 
 ## Run Modes
 
@@ -80,3 +94,15 @@ pnpm dev
 ## Documentation
 
 Technical and development details were moved to [DEVELOPMENT.md](./DEVELOPMENT.md).
+
+## Publication Checklist
+
+1. Update version in `package.json`.
+2. Validate package contents:
+```bash
+pnpm pack:check
+```
+3. Publish to npm:
+```bash
+npm publish
+```

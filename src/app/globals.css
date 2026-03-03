@@ -474,6 +474,21 @@ textarea {
   color: var(--danger);
 }
 
+.warning {
+  color: #9a5a00;
+  border: 1px solid #e5b35f;
+  background: #fff5e4;
+  border-radius: 10px;
+  padding: 0.6rem 0.75rem;
+  margin: 0;
+}
+
+[data-theme="dark"] .warning {
+  color: #ffd299;
+  border-color: #8f6b34;
+  background: #3c2f1f;
+}
+
 @media (max-width: 960px) {
   .split {
     grid-template-columns: 1fr;

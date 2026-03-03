@@ -9,6 +9,7 @@ export default function HomePage() {
   const router = useRouter();
   const [servers, setServers] = useState<ServerConfig[]>([]);
   const [error, setError] = useState("");
+  const [envWarning, setEnvWarning] = useState("");
 
   async function fetchServers() {
     const response = await fetch("/api/servers");
@@ -24,6 +25,21 @@ export default function HomePage() {
     fetchServers().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Failed to initialize"));
   }, []);
 
+  useEffect(() => {
+    fetch("/api/env")
+      .then((response) => response.json())
+      .then((payload: { ok?: boolean; missing?: string[] }) => {
+        if (!payload.ok && Array.isArray(payload.missing) && payload.missing.length > 0) {
+          setEnvWarning(`Missing environment variables: ${payload.missing.join(", ")}`);
+        } else {
+          setEnvWarning("");
+        }
+      })
+      .catch(() => {
+        setEnvWarning("");
+      });
+  }, []);
+
   async function handleConnect(server: ServerConfig) {
     setError("");
     router.push(`/agents?serverId=${encodeURIComponent(server.id)}`);
@@ -31,6 +47,7 @@ export default function HomePage() {
 
   return (
     <main className="container">
+      {envWarning ? <p className="warning">{envWarning}</p> : null}
       <ServerSelector
         servers={servers}
         onConnect={handleConnect}

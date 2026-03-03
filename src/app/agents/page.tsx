@@ -19,6 +19,7 @@ export default function AgentsPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | undefined>();
   const [error, setError] = useState("");
+  const [envWarning, setEnvWarning] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
@@ -56,6 +57,21 @@ export default function AgentsPage() {
 
   useEffect(() => {
     fetchServers().catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Failed to initialize"));
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/env")
+      .then((response) => response.json())
+      .then((payload: { ok?: boolean; missing?: string[] }) => {
+        if (!payload.ok && Array.isArray(payload.missing) && payload.missing.length > 0) {
+          setEnvWarning(`Missing environment variables: ${payload.missing.join(", ")}`);
+        } else {
+          setEnvWarning("");
+        }
+      })
+      .catch(() => {
+        setEnvWarning("");
+      });
   }, []);
 
   useEffect(() => {
@@ -268,6 +284,7 @@ export default function AgentsPage() {
         </div>
       </header>
       <div className="app-main">
+        {envWarning ? <p className="warning">{envWarning}</p> : null}
         <WorkspaceLayout
           server={activeServer}
           sessions={safeSessions}

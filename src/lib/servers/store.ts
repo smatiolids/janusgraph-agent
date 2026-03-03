@@ -1,12 +1,12 @@
-import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { v4 as uuidv4 } from "uuid";
 import YAML from "yaml";
 import type { ServerConfig, ServerFile } from "@/lib/types";
 import { ensureFileParent, exists } from "@/lib/fs-utils";
+import { resolveAppPath } from "@/lib/app-paths";
 import { serverSchema } from "@/lib/validators";
 
-const serversFilePath = path.join(process.cwd(), "server", "servers.yaml");
+const serversFilePath = resolveAppPath("server", "servers.yaml");
 
 const defaultServers: ServerFile = {
   servers: [

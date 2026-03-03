@@ -1,10 +1,10 @@
-import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { v4 as uuidv4 } from "uuid";
 import type { Session, SessionAgentContext, SessionMessage, SessionsFile } from "@/lib/types";
+import { resolveAppPath } from "@/lib/app-paths";
 import { ensureFileParent, exists } from "@/lib/fs-utils";
 
-const sessionsFilePath = path.join(process.cwd(), "server", "sessions.json");
+const sessionsFilePath = resolveAppPath("server", "sessions.json");
 
 const defaultSessionsFile: SessionsFile = { sessions: [] };
 

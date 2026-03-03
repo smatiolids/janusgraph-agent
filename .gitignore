@@ -7,3 +7,6 @@ pnpm-lock.yaml
 coverage
 log/*
 server/*
+.graphx-ai-runtime
+.pnpm-store
+dist/*
