@@ -25,7 +25,8 @@ const defaultDataModel = {
 
 const promptLogDir = path.join(process.cwd(), "log");
 const promptLogFile = path.join(promptLogDir, "agent-prompts.log");
-const sessionContextRoot = path.join(process.cwd(), "server", "session-contexts");
+const sessionContextRoot = path.join(process.cwd(), "server");
+const legacySessionContextRoot = path.join(process.cwd(), "server", "session-contexts");
 
 const janusSchemaQuery = `mgmt = graph.openManagement(); try { [
   vertexLabels: mgmt.getVertexLabels().collect { it.name() }.sort(),
@@ -123,6 +124,14 @@ function getSessionSampleSize(): number {
 
 function getSessionContextPaths(sessionId: string): { graphDataModelPath: string; janusgraphSchemaIndexesPath: string } {
   const sessionDir = path.join(sessionContextRoot, sessionId);
+  return {
+    graphDataModelPath: path.join(sessionDir, "graph_datamodel.json"),
+    janusgraphSchemaIndexesPath: path.join(sessionDir, "janusgraph_schema_indexes.json")
+  };
+}
+
+function getLegacySessionContextPaths(sessionId: string): { graphDataModelPath: string; janusgraphSchemaIndexesPath: string } {
+  const sessionDir = path.join(legacySessionContextRoot, sessionId);
   return {
     graphDataModelPath: path.join(sessionDir, "graph_datamodel.json"),
     janusgraphSchemaIndexesPath: path.join(sessionDir, "janusgraph_schema_indexes.json")
@@ -315,26 +324,386 @@ export async function buildPromptWithSessionQueryHistory(sessionId: string, prom
   ].join("\n");
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function toLabelStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item)).filter((item) => item.length > 0);
+}
+
+function extractPropertyNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names = value
+    .map((entry) => {
+      if (typeof entry === "string") return entry;
+      if (!isObjectRecord(entry)) return undefined;
+      if (typeof entry.name === "string") return entry.name;
+      if (typeof entry.key === "string") return entry.key;
+      return undefined;
+    })
+    .filter((item): item is string => typeof item === "string");
+  return Array.from(new Set(names));
+}
+
+function collectIndexedPropertyNames(indexes: unknown): Set<string> {
+  if (!Array.isArray(indexes)) return new Set<string>();
+
+  const indexedProps: string[] = [];
+  for (const idx of indexes) {
+    if (!isObjectRecord(idx) || !Array.isArray(idx.keys)) continue;
+    for (const key of idx.keys) {
+      if (!isObjectRecord(key) || typeof key.name !== "string") continue;
+      indexedProps.push(key.name);
+    }
+  }
+
+  return new Set(indexedProps);
+}
+
+function compactSample(sample: unknown): Record<string, unknown> {
+  if (!isObjectRecord(sample)) return { value: sample };
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(sample)) {
+    if (["id", "label", "type"].includes(key)) {
+      result[key] = value;
+      continue;
+    }
+
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+      result[key] = value;
+      continue;
+    }
+
+    if (Array.isArray(value)) {
+      result[key] = value.slice(0, 3);
+      continue;
+    }
+
+    if (isObjectRecord(value)) {
+      result[key] = Object.fromEntries(
+        Object.entries(value)
+          .slice(0, 5)
+          .map(([nestedKey, nestedValue]) => [nestedKey, nestedValue])
+      );
+    }
+  }
+  return result;
+}
+
+function collectPropertySampleValues(sampleRecords: unknown[], propertyName: string): unknown[] {
+  const values: unknown[] = [];
+
+  for (const record of sampleRecords) {
+    if (!isObjectRecord(record)) continue;
+
+    // Shape A: flattened map-like samples: { prop: value }
+    if (propertyName in record) {
+      const value = record[propertyName];
+      if (Array.isArray(value)) {
+        values.push(...value.slice(0, 3));
+      } else {
+        values.push(value);
+      }
+      continue;
+    }
+
+    // Shape B: JanusGraph element samples: { properties: [{ key|label, value }, ...] }
+    const props = record.properties;
+    if (!Array.isArray(props)) continue;
+    for (const prop of props) {
+      if (!isObjectRecord(prop)) continue;
+      const key = typeof prop.key === "string"
+        ? prop.key
+        : typeof prop.label === "string"
+          ? prop.label
+          : undefined;
+      if (key !== propertyName) continue;
+      values.push(prop.value);
+    }
+  }
+
+  const deduped: unknown[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const key = typeof value === "string" ? value : JSON.stringify(value);
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(value);
+    }
+    if (deduped.length >= 5) break;
+  }
+
+  return deduped;
+}
+
+function buildPropertiesObject(
+  propertyNames: string[],
+  indexedPropertyNames: Set<string>,
+  sampleRecords: unknown[]
+): Record<string, { indexed: boolean; sample_values: unknown[] }> {
+  return Object.fromEntries(
+    propertyNames.slice(0, 20).map((name) => [
+      name,
+      {
+        indexed: indexedPropertyNames.has(name),
+        sample_values: collectPropertySampleValues(sampleRecords, name)
+      }
+    ])
+  );
+}
+
+function buildRootSampleValues(
+  sampleRecords: unknown[],
+  labelType: "vertex" | "edge"
+): Array<{ id: unknown; values: Record<string, unknown> }> {
+  return sampleRecords.slice(0, 2).flatMap((sample) => {
+    if (!isObjectRecord(sample)) return [];
+
+    const values: Record<string, unknown> = {};
+    const nestedProperties = Array.isArray(sample.properties) ? sample.properties : [];
+
+    for (const prop of nestedProperties) {
+      if (!isObjectRecord(prop)) continue;
+      const key = typeof prop.key === "string"
+        ? prop.key
+        : typeof prop.label === "string"
+          ? prop.label
+          : undefined;
+      if (!key) continue;
+      values[key] = prop.value;
+    }
+
+    for (const [key, value] of Object.entries(sample)) {
+      if (["id", "label", "type", "properties", "inV", "outV"].includes(key)) continue;
+      if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+        values[key] = value;
+      }
+    }
+
+    if (labelType === "edge") {
+      const outV = isObjectRecord(sample.outV) ? sample.outV : undefined;
+      const inV = isObjectRecord(sample.inV) ? sample.inV : undefined;
+      if (typeof outV?.label === "string") values.outV_label = outV.label;
+      if (typeof inV?.label === "string") values.inV_label = inV.label;
+    }
+
+    return [{ id: sample.id, values }];
+  });
+}
+
+function inferEndpointLabelFromSamples(
+  sampleRecords: unknown[],
+  direction: "outV" | "inV"
+): string | undefined {
+  for (const sample of sampleRecords) {
+    if (!isObjectRecord(sample)) continue;
+    const endpoint = sample[direction];
+    if (!isObjectRecord(endpoint)) continue;
+    if (typeof endpoint.label === "string" && endpoint.label.length > 0) {
+      return endpoint.label;
+    }
+  }
+  return undefined;
+}
+
+function summarizeLabelEntries(
+  entries: unknown,
+  labelType: "vertex" | "edge",
+  indexedPropertyNames: Set<string>
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(entries)) return [];
+
+  return entries
+    .filter(isObjectRecord)
+    .map((entry) => {
+      const label = typeof entry.label === "string" ? entry.label : undefined;
+      if (!label) return undefined;
+
+      const sampleRecords = Array.isArray(entry.sampleRecords) ? entry.sampleRecords : [];
+      const properties = extractPropertyNames(entry.properties);
+
+      if (labelType === "edge") {
+        const outLabelFromModel = typeof entry.from === "string" ? entry.from : undefined;
+        const inLabelFromModel = typeof entry.to === "string" ? entry.to : undefined;
+        const outLabel = outLabelFromModel ?? inferEndpointLabelFromSamples(sampleRecords, "outV");
+        const inLabel = inLabelFromModel ?? inferEndpointLabelFromSamples(sampleRecords, "inV");
+
+        return {
+          label,
+          inV: { label: inLabel ?? "unknown" },
+          outV: { label: outLabel ?? "unknown" },
+          properties: buildPropertiesObject(properties, indexedPropertyNames, sampleRecords),
+          sample_values: buildRootSampleValues(sampleRecords, "edge")
+        };
+      }
+
+      return {
+        label,
+        type: labelType,
+        properties: buildPropertiesObject(properties, indexedPropertyNames, sampleRecords),
+        sample_values: buildRootSampleValues(sampleRecords, "vertex")
+      };
+    })
+    .filter((entry): entry is Record<string, unknown> => !!entry);
+}
+
+export async function getSessionGraphContextSummary(sessionId: string): Promise<Record<string, unknown>> {
+  const { dataModel, janusRuntimeContext } = await loadSessionContextFiles(sessionId);
+
+  const model = isObjectRecord(dataModel) ? dataModel : {};
+  const runtime = isObjectRecord(janusRuntimeContext) ? janusRuntimeContext : {};
+  const runtimeDetails = isObjectRecord(runtime.details) ? runtime.details : {};
+  const labelSamples = isObjectRecord(runtime.labelSamples) ? runtime.labelSamples : {};
+  const vertexIndexedProps = collectIndexedPropertyNames(runtimeDetails.vertexIndexes);
+  const edgeIndexedProps = collectIndexedPropertyNames(runtimeDetails.edgeIndexes);
+  const vertexSamplesByLabel = isObjectRecord(labelSamples.vertexSamplesByLabel)
+    ? labelSamples.vertexSamplesByLabel
+    : {};
+  const edgeSamplesByLabel = isObjectRecord(labelSamples.edgeSamplesByLabel)
+    ? labelSamples.edgeSamplesByLabel
+    : {};
+
+  const vertices = summarizeLabelEntries(model.vertices, "vertex", vertexIndexedProps);
+  const edges = summarizeLabelEntries(model.edges, "edge", edgeIndexedProps);
+
+  const fallbackVertexLabels = toLabelStringArray(runtimeDetails.vertexLabels);
+  const fallbackEdgeLabels = toLabelStringArray(runtimeDetails.edgeLabels);
+
+  const knownVertexLabels = new Set(vertices.map((entry) => String(entry.label)));
+  const knownEdgeLabels = new Set(edges.map((entry) => String(entry.label)));
+
+  const inferredVertices = fallbackVertexLabels
+    .filter((label) => !knownVertexLabels.has(label))
+    .slice(0, 50)
+    .map((label) => {
+      const samplesRaw = Array.isArray(vertexSamplesByLabel[label])
+        ? vertexSamplesByLabel[label]
+        : [];
+      const samples = samplesRaw.slice(0, 2).map((sample) => compactSample(sample));
+      const samplePropNames = Array.from(
+        new Set(
+          samples.flatMap((sample) =>
+            Object.keys(sample).filter((key) => !["id", "label", "type"].includes(key))
+          )
+        )
+      );
+      return {
+        label,
+        type: "vertex",
+        properties: buildPropertiesObject(samplePropNames, vertexIndexedProps, samplesRaw),
+        sample_values: buildRootSampleValues(samplesRaw, "vertex")
+      };
+    });
+
+  const inferredEdges = fallbackEdgeLabels
+    .filter((label) => !knownEdgeLabels.has(label))
+    .slice(0, 50)
+    .map((label) => {
+      const samplesRaw = Array.isArray(edgeSamplesByLabel[label])
+        ? edgeSamplesByLabel[label]
+        : [];
+      const samples = samplesRaw.slice(0, 2).map((sample) => compactSample(sample));
+      const samplePropNames = Array.from(
+        new Set(
+          samples.flatMap((sample) =>
+            Object.keys(sample).filter((key) => !["id", "label", "type"].includes(key))
+          )
+        )
+      );
+      const outLabel = inferEndpointLabelFromSamples(samplesRaw, "outV");
+      const inLabel = inferEndpointLabelFromSamples(samplesRaw, "inV");
+      return {
+        label,
+        inV: { label: inLabel ?? "unknown" },
+        outV: { label: outLabel ?? "unknown" },
+        properties: buildPropertiesObject(samplePropNames, edgeIndexedProps, samplesRaw),
+        sample_values: buildRootSampleValues(samplesRaw, "edge")
+      };
+    });
+
+  const summary = {
+    source: "session_context_summary",
+    sampleSizePerLabel: typeof labelSamples.sampleSizePerLabel === "number" ? labelSamples.sampleSizePerLabel : undefined,
+    vertices: [...vertices, ...inferredVertices],
+    edges: [...edges, ...inferredEdges]
+  };
+
+  const sessionContextPaths = getSessionContextPaths(sessionId);
+  const summaryPath = path.join(path.dirname(sessionContextPaths.graphDataModelPath), "graph_context_summary.json");
+  await mkdir(path.dirname(summaryPath), { recursive: true });
+  await writeFileToDisk(summaryPath, JSON.stringify(summary, null, 2), "utf8");
+
+  return summary;
+}
+
 export async function loadSessionContextFiles(sessionId: string): Promise<{ dataModel: unknown; janusRuntimeContext: unknown }> {
   const sessionContext = await getSessionAgentContext(sessionId);
-  const fallbackPaths = getSessionContextPaths(sessionId);
-  const graphDataModelPath = sessionContext?.contextFiles?.graphDataModelPath ?? fallbackPaths.graphDataModelPath;
-  const janusgraphSchemaIndexesPath =
-    sessionContext?.contextFiles?.janusgraphSchemaIndexesPath ?? fallbackPaths.janusgraphSchemaIndexesPath;
+  const primaryPaths = getSessionContextPaths(sessionId);
+  const legacyPaths = getLegacySessionContextPaths(sessionId);
 
-  const dataModel = (await exists(graphDataModelPath))
+  const graphDataModelPathCandidates = [
+    sessionContext?.contextFiles?.graphDataModelPath,
+    primaryPaths.graphDataModelPath,
+    legacyPaths.graphDataModelPath
+  ].filter((candidate): candidate is string => typeof candidate === "string");
+
+  const janusgraphSchemaIndexesPathCandidates = [
+    sessionContext?.contextFiles?.janusgraphSchemaIndexesPath,
+    primaryPaths.janusgraphSchemaIndexesPath,
+    legacyPaths.janusgraphSchemaIndexesPath
+  ].filter((candidate): candidate is string => typeof candidate === "string");
+
+  const graphDataModelPath = (
+    await Promise.all(
+      graphDataModelPathCandidates.map(async (candidate) => ((await exists(candidate)) ? candidate : undefined))
+    )
+  ).find(Boolean);
+
+  const janusgraphSchemaIndexesPath = (
+    await Promise.all(
+      janusgraphSchemaIndexesPathCandidates.map(async (candidate) => ((await exists(candidate)) ? candidate : undefined))
+    )
+  ).find(Boolean);
+
+  const dataModel = graphDataModelPath
     ? await readJsonFile(graphDataModelPath)
     : {
         ...defaultDataModel,
         warning: "Session graph data model file not found. Start a new session to initialize context files."
       };
 
-  const janusRuntimeContext = (await exists(janusgraphSchemaIndexesPath))
+  const janusRuntimeContext = janusgraphSchemaIndexesPath
     ? await readJsonFile(janusgraphSchemaIndexesPath)
     : {
         source: "session_file",
         warning: "Session JanusGraph schema/indexes file not found. Start a new session to initialize context files."
       };
+
+  // Migrate legacy session-context files into server/<session-id>/ on first access.
+  const shouldMigrateGraph = graphDataModelPath && graphDataModelPath !== primaryPaths.graphDataModelPath;
+  const shouldMigrateSchema =
+    janusgraphSchemaIndexesPath && janusgraphSchemaIndexesPath !== primaryPaths.janusgraphSchemaIndexesPath;
+
+  if (shouldMigrateGraph || shouldMigrateSchema) {
+    await mkdir(path.dirname(primaryPaths.graphDataModelPath), { recursive: true });
+
+    if (shouldMigrateGraph) {
+      await writeFileToDisk(primaryPaths.graphDataModelPath, JSON.stringify(dataModel, null, 2), "utf8");
+    }
+
+    if (shouldMigrateSchema) {
+      await writeFileToDisk(primaryPaths.janusgraphSchemaIndexesPath, JSON.stringify(janusRuntimeContext, null, 2), "utf8");
+    }
+
+    await updateSessionAgentContext(sessionId, {
+      janusgraphRuntimeContext: janusRuntimeContext as Record<string, unknown>,
+      janusgraphContextUpdatedAt: new Date().toISOString(),
+      contextFiles: primaryPaths
+    });
+  }
 
   return { dataModel, janusRuntimeContext };
 }
@@ -380,5 +749,9 @@ export async function initializeSessionContextFiles(sessionId: string, server: S
 
 export async function deleteSessionContextFiles(sessionId: string): Promise<void> {
   const sessionDir = path.join(sessionContextRoot, sessionId);
-  await rm(sessionDir, { recursive: true, force: true });
+  const legacySessionDir = path.join(legacySessionContextRoot, sessionId);
+  await Promise.all([
+    rm(sessionDir, { recursive: true, force: true }),
+    rm(legacySessionDir, { recursive: true, force: true })
+  ]);
 }

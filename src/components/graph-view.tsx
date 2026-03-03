@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import dagre from "dagre";
 import ReactFlow, {
   Background,
   Controls,
   MarkerType,
+  Position,
   type Edge,
   type Node,
   useEdgesState,
@@ -31,27 +31,37 @@ type PropertyItem = {
 
 const NODE_SIZE = 92;
 
+function oppositePosition(position: Position): Position {
+  if (position === Position.Left) return Position.Right;
+  if (position === Position.Right) return Position.Left;
+  if (position === Position.Top) return Position.Bottom;
+  return Position.Top;
+}
+
 function buildLayout(graph: GraphPayload): { nodes: Node[]; edges: Edge[] } {
-  const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", ranksep: 90, nodesep: 50 });
-  g.setDefaultEdgeLabel(() => ({}));
+  const totalNodes = graph.nodes.length;
+  const minRadius = 140;
+  const spreadRadius = 36;
+  const radius = Math.max(minRadius, totalNodes * spreadRadius);
+  const centerX = radius + NODE_SIZE;
+  const centerY = radius + NODE_SIZE;
 
-  graph.nodes.forEach((node) => {
-    g.setNode(node.id, { width: NODE_SIZE, height: NODE_SIZE });
-  });
-
-  graph.edges.forEach((edge) => {
-    g.setEdge(edge.source, edge.target);
-  });
-
-  dagre.layout(g);
-
-  const nodes: Node[] = graph.nodes.map((node) => {
-    const position = g.node(node.id);
+  const nodes: Node[] = graph.nodes.map((node, index) => {
+    const angle = totalNodes <= 1 ? 0 : (2 * Math.PI * index) / totalNodes;
+    const x = centerX + radius * Math.cos(angle) - NODE_SIZE / 2;
+    const y = centerY + radius * Math.sin(angle) - NODE_SIZE / 2;
+    const anchorPosition =
+      Math.abs(Math.cos(angle)) >= Math.abs(Math.sin(angle))
+        ? (Math.cos(angle) >= 0 ? Position.Right : Position.Left)
+        : Math.sin(angle) >= 0
+          ? Position.Bottom
+          : Position.Top;
     return {
       id: node.id,
       data: { label: node.label, raw: node.data ?? {} },
-      position: { x: position.x - NODE_SIZE / 2, y: position.y - NODE_SIZE / 2 },
+      position: { x, y },
+      sourcePosition: anchorPosition,
+      targetPosition: oppositePosition(anchorPosition),
       style: {
         border: "1px solid #d6d2c4",
         borderRadius: "50%",

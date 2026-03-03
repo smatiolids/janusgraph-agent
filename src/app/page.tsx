@@ -13,6 +13,7 @@ export default function HomePage() {
   const [error, setError] = useState("");
   const [promptDraft, setPromptDraft] = useState("");
   const [isExecuting, setIsExecuting] = useState(false);
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
 
   const safeSessions = useMemo(() => (Array.isArray(sessions) ? sessions : []), [sessions]);
   const activeSession = useMemo(
@@ -57,18 +58,23 @@ export default function HomePage() {
   async function handleCreateSession() {
     if (!activeServer) return;
 
-    const response = await fetch("/api/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ serverId: activeServer.id })
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error || "Failed to create session");
-    }
+    setIsCreatingSession(true);
+    try {
+      const response = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ serverId: activeServer.id })
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error || "Failed to create session");
+      }
 
-    await fetchSessions(activeServer.id);
-    setActiveSessionId(payload.session.id);
+      await fetchSessions(activeServer.id);
+      setActiveSessionId(payload.session.id);
+    } finally {
+      setIsCreatingSession(false);
+    }
   }
 
   async function handleSelectSession(id: string) {
@@ -207,6 +213,7 @@ export default function HomePage() {
         promptDraft={promptDraft}
         onPromptDraftChange={setPromptDraft}
         isExecuting={isExecuting}
+        isCreatingSession={isCreatingSession}
       />
       {error ? <p className="error">{error}</p> : null}
     </main>

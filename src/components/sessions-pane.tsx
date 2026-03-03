@@ -9,6 +9,8 @@ type Props = {
   onSelectSession: (id: string) => Promise<void>;
   onRenameSession: (id: string) => Promise<void>;
   onDeleteSession: (id: string) => Promise<void>;
+  isCreatingSession: boolean;
+  isBusy: boolean;
 };
 
 export function SessionsPane({
@@ -17,14 +19,21 @@ export function SessionsPane({
   onCreateSession,
   onSelectSession,
   onRenameSession,
-  onDeleteSession
+  onDeleteSession,
+  isCreatingSession,
+  isBusy
 }: Props) {
+  const actionsDisabled = isCreatingSession || isBusy;
+
   return (
     <div className="panel sessions-pane stack">
       <div className="row" style={{ justifyContent: "space-between" }}>
         <h3 style={{ margin: 0 }}>Sessions</h3>
-        <button className="button secondary" onClick={onCreateSession}>
-          New
+        <button className="button secondary" onClick={onCreateSession} disabled={actionsDisabled}>
+          <span className="tab-label-with-spinner">
+            {isCreatingSession ? <span className="spinner tab-spinner" /> : null}
+            {isCreatingSession ? "Creating..." : "New"}
+          </span>
         </button>
       </div>
 
@@ -34,6 +43,7 @@ export function SessionsPane({
             <button
               className={`session-item ${activeSessionId === session.id ? "active" : ""}`}
               onClick={() => onSelectSession(session.id)}
+              disabled={actionsDisabled}
             >
               <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                 <div style={{ fontWeight: 600 }}>{session.title}</div>
@@ -43,10 +53,12 @@ export function SessionsPane({
                     role="button"
                     tabIndex={0}
                     onClick={(event) => {
+                      if (actionsDisabled) return;
                       event.stopPropagation();
                       void onRenameSession(session.id);
                     }}
                     onKeyDown={(event) => {
+                      if (actionsDisabled) return;
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         event.stopPropagation();
@@ -61,10 +73,12 @@ export function SessionsPane({
                     role="button"
                     tabIndex={0}
                     onClick={(event) => {
+                      if (actionsDisabled) return;
                       event.stopPropagation();
                       void onDeleteSession(session.id);
                     }}
                     onKeyDown={(event) => {
+                      if (actionsDisabled) return;
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
                         event.stopPropagation();

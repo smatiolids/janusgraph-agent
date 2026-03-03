@@ -19,6 +19,7 @@ type Props = {
   promptDraft: string;
   onPromptDraftChange: (value: string) => void;
   isExecuting: boolean;
+  isCreatingSession: boolean;
 };
 
 export function WorkspaceLayout({
@@ -33,7 +34,8 @@ export function WorkspaceLayout({
   onRerunQuery,
   promptDraft,
   onPromptDraftChange,
-  isExecuting
+  isExecuting,
+  isCreatingSession
 }: Props) {
   const title = useMemo(() => {
     if (!activeSession) return "No session selected";
@@ -49,6 +51,8 @@ export function WorkspaceLayout({
         onSelectSession={onSelectSession}
         onRenameSession={onRenameSession}
         onDeleteSession={onDeleteSession}
+        isCreatingSession={isCreatingSession}
+        isBusy={isExecuting || isCreatingSession}
       />
 
       <div className="right-pane">
@@ -71,7 +75,7 @@ export function WorkspaceLayout({
           onSubmit={onSubmitPrompt}
           value={promptDraft}
           onChange={onPromptDraftChange}
-          disabled={!activeSession}
+          disabled={!activeSession || isExecuting || isCreatingSession}
         />
       </div>
     </div>

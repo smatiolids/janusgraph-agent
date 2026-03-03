@@ -41,7 +41,10 @@ export function PromptInput({ onSubmit, value, onChange, disabled }: Props) {
         />
         <div className="row" style={{ justifyContent: "flex-end" }}>
           <button className="button" onClick={handleSubmit} disabled={disabled || submitting || !value.trim()}>
-            {submitting ? "Sending..." : "Send"}
+            <span className="tab-label-with-spinner">
+              {submitting ? <span className="spinner tab-spinner" /> : null}
+              {submitting ? "Sending..." : "Send"}
+            </span>
           </button>
         </div>
         {error ? <p className="error">{error}</p> : null}
